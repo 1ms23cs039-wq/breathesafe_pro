@@ -181,22 +181,63 @@ def dataset_stats(db: Session = Depends(get_db)):
     }
 
 
-# ── 5. V2: All India live stations (200+ CPCB) ────────────────────────────────
+# ── 5. V2/V3: All India live stations (29 DB cities) ─────────────────────────
 @router.get("/india-stations", response_model=List[dict])
 def india_stations(db: Session = Depends(get_db)):
     """
-    Returns ALL active Indian AQI monitoring stations with live data.
+    Returns live AQI data for all 29 monitored Indian cities.
 
-    Merges:
-      • Our 29 DB cities (full pollutant data, most accurate)
-      • OpenAQ v3 — all other CPCB stations (~200+ total)
+    Uses the same direct SQLAlchemy ORM query as /aqi/rankings — fast,
+    reliable, no external API calls. Returns data formatted for AQIMap.
 
-    Cached 30 min in-memory to avoid hammering OpenAQ.
     Each entry: name, state, latitude, longitude, india_aqi,
                 india_aqi_category, station_name, pm2_5_ugm3, stale, source
     """
-    from app.services.data_pipeline import get_all_india_live
-    return get_all_india_live(db=db)
+    from datetime import datetime, timedelta
+
+    # Subquery: latest reading per station (same pattern as /aqi/rankings)
+    latest_sub = (
+        db.query(
+            AQIData.station_id,
+            func.max(AQIData.datetime).label("max_dt"),
+        )
+        .group_by(AQIData.station_id)
+        .subquery()
+    )
+
+    rows = (
+        db.query(AQIData, City, MonitoringStation)
+        .join(MonitoringStation, AQIData.station_id == MonitoringStation.id)
+        .join(City, MonitoringStation.city_id == City.id)
+        .join(
+            latest_sub,
+            (AQIData.station_id == latest_sub.c.station_id)
+            & (AQIData.datetime == latest_sub.c.max_dt),
+        )
+        .order_by(City.name)
+        .all()
+    )
+
+    now_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
+    result = []
+    for aqi_row, city_row, ms_row in rows:
+        dt = aqi_row.datetime
+        stale = (now_ist - dt).total_seconds() > 3 * 3600 if dt else True
+        result.append({
+            "name":               city_row.name,
+            "state":              city_row.state,
+            "latitude":           float(city_row.latitude),
+            "longitude":          float(city_row.longitude),
+            "india_aqi":          float(aqi_row.india_aqi)    if aqi_row.india_aqi    is not None else None,
+            "india_aqi_category": aqi_row.india_aqi_category,
+            "pm2_5_ugm3":         float(aqi_row.pm2_5_ugm3)   if aqi_row.pm2_5_ugm3   is not None else None,
+            "pm10_ugm3":          float(aqi_row.pm10_ugm3)    if aqi_row.pm10_ugm3    is not None else None,
+            "no2_ugm3":           float(aqi_row.no2_ugm3)     if aqi_row.no2_ugm3     is not None else None,
+            "station_name":       ms_row.station_name or city_row.name.title(),
+            "stale":              stale,
+            "source":             "db",
+        })
+    return result
 
 
 # ── 6. V2: Stations filtered by state ────────────────────────────────────────
