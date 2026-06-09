@@ -33,10 +33,10 @@ class Settings(BaseSettings):
     APP_NAME:    str  = "BreatheSafe"
     APP_VERSION: str  = "1.0.1"
     DEBUG:       bool = False
-    SECRET_KEY:  str  = "change-me-in-production-use-openssl-rand-hex-32"
+    SECRET_KEY:  str  = ""   # Must be set via environment variable in production
 
     # ── Database ─────────────────────────────────────────────────────────────
-    DATABASE_URL: str = "postgresql://breathesafe:breathesafe@db:5432/breathesafe"
+    DATABASE_URL: str = ""   # Must be set via environment variable in production
 
     # ── JWT Auth ─────────────────────────────────────────────────────────────
     JWT_ALGORITHM:               str = "HS256"
